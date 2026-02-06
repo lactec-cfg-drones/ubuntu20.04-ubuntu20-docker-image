@@ -1,8 +1,3 @@
-# Backup current Dockerfile
-cp Dockerfile Dockerfile.backup
-
-# Create fixed Dockerfile
-cat > Dockerfile << 'EOF'
 # Ubuntu 20.04 with ROS 2 Foxy for Manifold 3
 FROM ubuntu:20.04
 
@@ -10,13 +5,15 @@ LABEL maintainer="leticiarp2000"
 LABEL version="1.0.0"
 LABEL description="Ubuntu 20.04 with ROS 2 Foxy for DJI Manifold 3"
 
-# Environment
+# Environment variables
 ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DISTRO=foxy
 
-# Install ROS 2 Foxy
+# Install ROS 2 Foxy from APT repository
 RUN apt-get update && apt-get install -y \
-    curl gnupg2 lsb-release \
+    curl \
+    gnupg2 \
+    lsb-release \
     && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         -o /usr/share/keyrings/ros-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
@@ -30,7 +27,7 @@ RUN apt-get update && apt-get install -y \
     && rosdep update \
     && rm -rf /var/lib/apt/lists/*
 
-# Install tools
+# Install development tools
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -51,14 +48,15 @@ RUN apt-get update && apt-get install -y \
     && sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure
+# Configure environment
 RUN echo 'source /opt/ros/foxy/setup.zsh' >> ~/.zshrc \
     && echo 'alias ll="ls -la"' >> ~/.zshrc \
     && echo 'alias ros2b="colcon build --symlink-install"' >> ~/.zshrc
 
+# Create workspace
 RUN mkdir -p /ros2_ws/src
 WORKDIR /ros2_ws
 
+# Set default shell
 SHELL ["zsh", "-c"]
 CMD ["zsh"]
-EOF
