@@ -1,0 +1,17 @@
+.git
+.github
+.vscode
+*.md
+*.txt
+.gitignore
+*.log
+temp/
+tmp/
+__pycache__/
+*.pyc
+.env
+node_modules/
+dist/
+build/
+*.tar.gz
+*.zip
