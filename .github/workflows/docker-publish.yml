@@ -1,0 +1,172 @@
+name: Publish Ubuntu 20.04 Manifold3 Docker Image
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'Dockerfile'
+      - '.github/workflows/docker-publish.yml'
+      - 'docker/**'
+      - 'requirements*.txt'
+      - '*.sh'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag'
+        required: false
+        default: 'latest'
+      push_to_dockerhub:
+        description: 'Push to Docker Hub'
+        type: boolean
+        default: true
+      push_to_ghcr:
+        description: 'Push to GitHub Container Registry'
+        type: boolean
+        default: true
+
+env:
+  # Your repository name
+  REPO_NAME: "ubuntu20_manifold3"
+  DOCKERHUB_USERNAME: "leticiarp2000"
+  GHCR_USERNAME: "leticiarp2000"
+
+jobs:
+  push_to_registries:
+    name: Push Docker image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    strategy:
+      matrix:
+        registry: ['dockerhub', 'ghcr']
+        include:
+          - registry: dockerhub
+            enabled: ${{ github.event.inputs.push_to_dockerhub != 'false' && github.event_name != 'pull_request' }}
+            image_name: ${{ env.DOCKERHUB_USERNAME }}/${{ env.REPO_NAME }}
+          - registry: ghcr
+            enabled: ${{ github.event.inputs.push_to_ghcr != 'false' && github.event_name != 'pull_request' }}
+            image_name: ghcr.io/${{ github.repository }}
+    
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Log in to Docker Hub
+        if: matrix.registry == 'dockerhub' && matrix.enabled
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      - name: Log in to GitHub Container Registry
+        if: matrix.registry == 'ghcr' && matrix.enabled
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ matrix.image_name }}
+          tags: |
+            # Default latest tag for main branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            
+            # Git tags (releases)
+            type=ref,event=tag
+            
+            # Version tags from releases
+            type=match,pattern=v?(?<version>\d+\.\d+\.\d+(?:-\w+)?),group=version
+            
+            # Branch name tags (except main/master)
+            type=ref,event=branch,prefix=branch-,suffix=,enable=${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+            
+            # Commit SHA
+            type=sha,prefix=sha-,suffix=
+            
+            # Date-based tags
+            type=raw,value=date-{{date 'YYYYMMDD'}}
+            
+            # Manual version
+            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event.inputs.version != 'latest' && github.event.inputs.version != '' }}
+            
+          labels: |
+            maintainer=leticiarp2000
+            org.opencontainers.image.title=Ubuntu 20.04 with Manifold 3
+            org.opencontainers.image.description=Docker image with Ubuntu 20.04 and Manifold 3 setup
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version={{version}}
+            org.opencontainers.image.created={{date}}
+            org.opencontainers.image.revision={{sha}}
+            org.opencontainers.image.licenses=MIT
+            
+      - name: Build Docker image
+        if: matrix.enabled
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          
+      - name: Display push info
+        if: matrix.enabled
+        run: |
+          echo "✅ Successfully pushed to ${{ matrix.registry }}"
+          echo "📦 Image: ${{ matrix.image_name }}"
+          echo "🏷️ Tags: ${{ steps.meta.outputs.tags }}"
+          echo ""
+          
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "# Docker Image Publication Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Images Published:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ matrix.registry }}" == "dockerhub" && "${{ matrix.enabled }}" == "true" ]]; then
+            echo "### 🐋 Docker Hub" >> $GITHUB_STEP_SUMMARY
+            echo "- **Repository**: [${{ env.DOCKERHUB_USERNAME }}/${{ env.REPO_NAME }}](https://hub.docker.com/r/${{ env.DOCKERHUB_USERNAME }}/${{ env.REPO_NAME }})" >> $GITHUB_STEP_SUMMARY
+            echo "- **Tags**: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ matrix.registry }}" == "ghcr" && "${{ matrix.enabled }}" == "true" ]]; then
+            echo "### 📦 GitHub Container Registry" >> $GITHUB_STEP_SUMMARY
+            echo "- **Repository**: [ghcr.io/${{ github.repository }}](https://ghcr.io/${{ github.repository }})" >> $GITHUB_STEP_SUMMARY
+            echo "- **Tags**: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Upload SBOM
+        if: matrix.enabled && github.event_name != 'pull_request'
+        uses: anchore/syft-action@v4
+        with:
+          image: ${{ matrix.image_name }}:latest
+          format: spdx-json
+          output: sbom-${{ matrix.registry }}.json
+          
+      - name: Upload SBOM artifact
+        if: matrix.enabled && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.registry }}
+          path: sbom-${{ matrix.registry }}.json
