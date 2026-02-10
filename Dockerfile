@@ -2,7 +2,7 @@
 FROM ubuntu:20.04
 
 LABEL maintainer="leticiarp2000"
-LABEL version="1.0.1"
+LABEL version="1.0.3"
 LABEL description="Ubuntu 20.04 with ROS 2 Foxy for DJI Manifold 3"
 
 # Environment variables
