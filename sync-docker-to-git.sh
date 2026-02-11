@@ -1,32 +1,60 @@
 #!/bin/bash
-# sync-docker-to-git.sh
+# sync-docker-to-git.sh - Improved with version tracking
 
-CONTAINER_ID=$1
-NEW_TAG=$2
-COMMIT_MESSAGE=$3
+set -e
 
-if [ -z "$CONTAINER_ID" ] || [ -z "$NEW_TAG" ] || [ -z "$COMMIT_MESSAGE" ]; then
-    echo "Usage: $0 <container_id> <new_tag> <commit_message>"
-    echo "Example: $0 cf14d00be54a 1.0.1 'Fixed ROS 2 PATH'"
-    exit 1
-fi
+echo "Syncing Docker image with Git repository..."
 
-# 1. Commit container to new tag
-docker commit -m "$COMMIT_MESSAGE" -a "$(git config user.name)" \
-    $CONTAINER_ID leticiarp2000/ubuntu20_dji_manifold3:$NEW_TAG
+# Get current Git commit
+GIT_COMMIT=$(git rev-parse --short HEAD)
+GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+VERSION=${1:-"1.0.3"}
+COMMIT_MSG=${2:-"Update Docker image to version $VERSION (commit: $GIT_COMMIT)"}
 
-# 2. Push to Docker Hub
-docker push leticiarp2000/ubuntu20_dji_manifold3:$NEW_TAG
+echo "Git commit: $GIT_COMMIT on branch: $GIT_BRANCH"
+echo "Building version: $VERSION"
 
-# 3. Update Dockerfile with version
-cd ~/Ubuntu20.04-DocerImage
-sed -i "s/LABEL version=\"[^\"]*\"/LABEL version=\"$NEW_TAG\"/" Dockerfile
-
-# 4. Commit to Git
+# Step 1: Commit any changes to Git
+echo "Committing changes to Git..."
 git add Dockerfile
-git commit -S -m "fix: $COMMIT_MESSAGE (version $NEW_TAG)"
-git push origin main
+git add *.sh
+git add *.md
+git add .github/ 2>/dev/null || true
+git commit -m "$COMMIT_MSG" || echo "No changes to commit"
+git push origin $GIT_BRANCH
 
-echo "✅ Changes synced:"
-echo "  - Docker Hub: leticiarp2000/ubuntu20_dji_manifold3:$NEW_TAG"
-echo "  - Git: Updated Dockerfile version to $NEW_TAG"
+# Step 2: Build Docker image with build args
+echo "Building Docker image: leticiarp2000/ubuntu20_dji_manifold3:$VERSION"
+docker build \
+  --build-arg VERSION=$VERSION \
+  --build-arg GIT_COMMIT=$GIT_COMMIT \
+  --build-arg BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+  -t leticiarp2000/ubuntu20_dji_manifold3:$VERSION .
+
+# Step 3: Tag as latest
+docker tag leticiarp2000/ubuntu20_dji_manifold3:$VERSION \
+  leticiarp2000/ubuntu20_dji_manifold3:latest
+
+# Step 4: Test the image
+echo "Testing image..."
+docker run --rm leticiarp2000/ubuntu20_dji_manifold3:$VERSION \
+  test -f /root/Payload-SDK/VERSION || exit 1
+
+docker run --rm leticiarp2000/ubuntu20_dji_manifold3:$VERSION \
+  cat /root/Payload-SDK/VERSION
+
+# Step 5: Push to Docker Hub
+echo "⬆Pushing to Docker Hub..."
+docker push leticiarp2000/ubuntu20_dji_manifold3:$VERSION
+docker push leticiarp2000/ubuntu20_dji_manifold3:latest
+
+# Step 6: Create Git tag
+echo "Creating Git tag: v$VERSION"
+git tag -a "v$VERSION" -m "Release version $VERSION (commit: $GIT_COMMIT)"
+git push origin "v$VERSION"
+
+echo "Success!"
+echo "  - Version: $VERSION"
+echo "  - Commit: $GIT_COMMIT"
+echo "  - Image: leticiarp2000/ubuntu20_dji_manifold3:$VERSION"
+echo "  - Image: leticiarp2000/ubuntu20_dji_manifold3:latest"
